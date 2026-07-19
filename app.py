@@ -1,28 +1,21 @@
 from flask import Flask, render_template, request, redirect, session, url_for
+import json
 import time
+import os
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
 
-# 明文密码存储在字典中
-USERS = {
-    "admin": {
-        "username": "admin",
-        "password": "admin123",
-        "role": "admin",
-        "email": "admin@example.com",
-        "phone": "13800138000",
-        "balance": 99999,
-    },
-    "alice": {
-        "username": "alice",
-        "password": "alice2025",
-        "role": "user",
-        "email": "alice@example.com",
-        "phone": "13900139001",
-        "balance": 100,
-    },
-}
+# 从 users.json 加载用户数据（不在代码中直接暴露账号密码）
+def _load_users():
+    users_path = os.path.join(os.path.dirname(__file__), "users.json")
+    if not os.path.exists(users_path):
+        print(f"错误：找不到 {users_path}，请参照 users.json.example 创建")
+        return {}
+    with open(users_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+USERS = _load_users()
 
 # ── 防暴力破解 ────────────────────────────────────────────────
 # 格式: { "ip:username": {"count": N, "time": timestamp} }
