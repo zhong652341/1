@@ -1,0 +1,18 @@
+{
+    "admin": {
+        "username": "admin",
+        "password": "admin123",
+        "role": "admin",
+        "email": "admin@example.com",
+        "phone": "13800138000",
+        "balance": 0
+    },
+    "alice": {
+        "username": "alice",
+        "password": "alice2025",
+        "role": "user",
+        "email": "alice@example.com",
+        "phone": "13900139001",
+        "balance": 0
+    }
+}
