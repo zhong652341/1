@@ -24,7 +24,7 @@ USERS = {
     },
 }
 
-# ── 防暴力破解（保持） ────────────────────────────────────────────────
+# ── 防暴力破解 ────────────────────────────────────────────────
 # 格式: { "ip:username": {"count": N, "time": timestamp} }
 _login_attempts: dict = {}
 _MAX_LOGIN_ATTEMPTS = 5
@@ -58,7 +58,7 @@ def login():
         client_ip = request.remote_addr or "unknown"
         lock_key = f"{client_ip}:{username}"
 
-        # 防暴力破解检查（保持）
+        # 防暴力破解检查
         _cleanup_attempts()
         if lock_key in _login_attempts:
             if _login_attempts[lock_key]["count"] >= _MAX_LOGIN_ATTEMPTS:
