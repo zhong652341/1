@@ -5,3 +5,5 @@ __pycache__/
 venv/
 .venv/
 users.json
+data/
+test_app.py
