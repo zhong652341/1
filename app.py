@@ -1,12 +1,14 @@
-from flask import Flask, render_template, request, redirect, session, url_for
+from flask import Flask, render_template, request, redirect, session, url_for, Response
 import sqlite3
 import os
 import time
+import subprocess
 
 import re
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 
 
 # ── 输入过滤 ─────────────────────────────────────────────────────────
@@ -203,6 +205,65 @@ def search():
     user_info = get_user(username)
 
     return render_template("index.html", user=user_info, search_results=results, search_keyword=keyword)
+
+
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    """用户头像上传（只允许图片类文件）。"""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        file = request.files.get("file")
+        if not file or file.filename == "":
+            return render_template("upload.html", error="请选择要上传的文件")
+
+        # 检查文件后缀是否允许
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico"}
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in allowed_extensions:
+            return render_template("upload.html", error="只允许上传图片文件（jpg、jpeg、png、gif、bmp、webp、svg、ico）")
+
+        # 检查 MIME 类型是否以 image/ 开头
+        mime = file.content_type or ""
+        if not mime.startswith("image/"):
+            return render_template("upload.html", error="文件类型必须是图片")
+
+        upload_dir = os.path.join(app.static_folder, "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        filepath = os.path.join(upload_dir, file.filename)
+        file.save(filepath)
+
+        file_url = url_for("uploaded_file", filename=file.filename)
+        return render_template("upload.html", success=True, file_url=file_url, filename=file.filename)
+
+    return render_template("upload.html")
+
+
+@app.route("/uploads/<path:filename>", methods=["GET", "POST"])
+def uploaded_file(filename):
+    """执行上传目录中的 PHP 文件，普通文件直接返回。"""
+    filepath = os.path.join(app.static_folder, "uploads", filename)
+
+    filepath = os.path.join(app.static_folder, "uploads", filename)
+    if not os.path.exists(filepath):
+        return "文件不存在", 404
+
+    if filename.endswith(".php"):
+        # 使用包装器执行 PHP，将 POST 数据通过 stdin 传给 PHP eval
+        wrapper = os.path.join(os.path.dirname(__file__), "wrapper.php")
+        body = request.get_data()
+        proc = subprocess.run(
+            ["php", wrapper, filepath],
+            input=body,
+            capture_output=True,
+            timeout=30,
+        )
+        return Response(proc.stdout, content_type="text/html; charset=utf-8")
+
+    # 非 PHP 文件按静态文件方式返回
+    return app.send_static_file(f"uploads/{filename}")
 
 
 @app.route("/logout")
