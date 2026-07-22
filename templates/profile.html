@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}个人中心 - 用户管理系统{% endblock %}
+{% block content %}
+{% if user %}
+    {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    <div class="card">
+        <h2 class="card-title">个人中心</h2>
+        <ul class="user-info-list">
+            <li><span class="info-label">ID：</span><span class="info-value">{{ user.id }}</span></li>
+            <li><span class="info-label">用户名：</span><span class="info-value">{{ user.username }}</span></li>
+            <li><span class="info-label">邮箱：</span><span class="info-value">{{ user.email }}</span></li>
+            <li><span class="info-label">手机：</span><span class="info-value">{{ user.phone }}</span></li>
+            <li><span class="info-label">余额：</span><span class="info-value">¥{{ user.balance }}</span></li>
+        </ul>
+        <a href="/" class="btn btn-primary">首页</a>
+    </div>
+
+    <div class="card">
+        <h3 class="card-title">充值</h3>
+        <form method="post" action="{{ url_for('recharge') }}" class="form">
+            <div class="form-group">
+                <label for="amount">充值金额</label>
+                <input type="number" id="amount" name="amount" placeholder="请输入充值金额" step="0.01" required>
+            </div>
+            <button type="submit" class="btn btn-primary">充 值</button>
+        </form>
+    </div>
+{% else %}
+    <div class="card text-center">
+        <h2 class="card-title">用户不存在</h2>
+        <p class="card-text">请检查用户ID是否正确。</p>
+        <a href="/" class="btn btn-primary">返回首页</a>
+    </div>
+{% endif %}
+{% endblock %}

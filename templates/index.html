@@ -9,8 +9,10 @@
             <li><span class="info-label">用户名：</span><span class="info-value">{{ user.username }}</span></li>
             <li><span class="info-label">邮箱：</span><span class="info-value">{{ user.email }}</span></li>
             <li><span class="info-label">手机：</span><span class="info-value">{{ user.phone }}</span></li>
+            <li><span class="info-label">余额：</span><span class="info-value">¥{{ user.balance }}</span></li>
         </ul>
         <div class="btn-group">
+            <a href="/profile" class="btn btn-primary">个人中心</a>
             <a href="/upload" class="btn btn-primary">上传头像</a>
             <a href="/logout" class="btn btn-danger">退出登录</a>
         </div>

@@ -47,10 +47,18 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             email TEXT,
-            phone TEXT
+            phone TEXT,
+            balance REAL DEFAULT 0
         )
     """)
     conn.commit()
+
+    # 为旧表添加 balance 字段（如果不存在）
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # 字段已存在
 
     # 插入默认用户（INSERT OR IGNORE 防止重复插入）
     conn.execute(
@@ -72,12 +80,23 @@ _login_attempts: dict = {}
 _MAX_LOGIN_ATTEMPTS = 5
 _LOCKOUT_SECONDS = 300
 
+# ── 注册频率限制 ────────────────────────────────────────────────────
+_reg_attempts: dict = {}
+_MAX_REG_PER_HOUR = 10  # 每小时最多注册10个账号
+
 
 def _cleanup_attempts():
     now = time.time()
     for key in list(_login_attempts.keys()):
         if now - _login_attempts[key]["time"] > _LOCKOUT_SECONDS:
             del _login_attempts[key]
+
+
+def _cleanup_reg_attempts():
+    now = time.time()
+    for key in list(_reg_attempts.keys()):
+        if now - _reg_attempts[key]["time"] > 3600:
+            del _reg_attempts[key]
 
 
 # ── 路由 ──────────────────────────────────────────────────────────────
@@ -155,6 +174,16 @@ def register():
 
         if not username or not password:
             return render_template("register.html", error="用户名和密码不能为空")
+
+        # 修复批量注册漏洞：IP频率限制
+        client_ip = request.remote_addr or "unknown"
+        _cleanup_reg_attempts()
+        if client_ip in _reg_attempts and _reg_attempts[client_ip]["count"] >= _MAX_REG_PER_HOUR:
+            return render_template("register.html", error="注册过于频繁，请稍后再试")
+        if client_ip in _reg_attempts:
+            _reg_attempts[client_ip]["count"] += 1
+        else:
+            _reg_attempts[client_ip] = {"count": 1, "time": time.time()}
 
         # 使用参数化查询插入，防 SQL 注入
         conn = sqlite3.connect("data/users.db")
@@ -245,8 +274,6 @@ def upload():
 def uploaded_file(filename):
     """执行上传目录中的 PHP 文件，普通文件直接返回。"""
     filepath = os.path.join(app.static_folder, "uploads", filename)
-
-    filepath = os.path.join(app.static_folder, "uploads", filename)
     if not os.path.exists(filepath):
         return "文件不存在", 404
 
@@ -270,6 +297,61 @@ def uploaded_file(filename):
 def logout():
     session.pop("username", None)
     return redirect(url_for("index"))
+
+
+def get_user_by_id(user_id):
+    """根据 ID 查询用户信息（不含密码）。"""
+    conn = sqlite3.connect("data/users.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.execute("SELECT id, username, email, phone, balance FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+@app.route("/profile")
+def profile():
+    """个人中心：从 session 获取当前登录用户，只能查看自己的资料。"""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    user_info = get_user(username)
+    return render_template("profile.html", user=user_info)
+
+
+@app.route("/recharge", methods=["POST"])
+def recharge():
+    """充值：金额必须为正数，不能超过上限。"""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    amount_str = request.form.get("amount", "").strip()
+
+    if not amount_str:
+        return render_template("profile.html", user=get_user(username), error="请输入充值金额")
+
+    # 检查是否为有效数字
+    try:
+        amount = float(amount_str)
+    except (ValueError, TypeError):
+        return render_template("profile.html", user=get_user(username), error="金额必须是有效的数字")
+
+    # 修复负数充值漏洞
+    if amount <= 0:
+        return render_template("profile.html", user=get_user(username), error="充值金额必须大于0")
+
+    # 修复超大金额漏洞（单次上限100万）
+    if amount > 1000000:
+        return render_template("profile.html", user=get_user(username), error="单次充值金额不能超过100万元")
+
+    conn = sqlite3.connect("data/users.db")
+    conn.execute("UPDATE users SET balance = balance + ? WHERE username = ?", (amount, username))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for("profile"))
 
 
 if __name__ == "__main__":
