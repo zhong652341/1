@@ -1,9 +1,7 @@
-from flask import Flask, render_template, request, redirect, session, url_for, Response
+from flask import Flask, render_template, request, redirect, session, url_for
 import sqlite3
 import os
 import time
-import subprocess
-
 import re
 
 app = Flask(__name__)
@@ -261,36 +259,66 @@ def upload():
 
         upload_dir = os.path.join(app.static_folder, "uploads")
         os.makedirs(upload_dir, exist_ok=True)
-        filepath = os.path.join(upload_dir, file.filename)
+        # 修复路径穿越：拒绝包含路径分隔符的文件名
+        safe_filename = file.filename
+        if "/" in safe_filename or "\\" in safe_filename or ".." in safe_filename:
+            return render_template("upload.html", error="无效的文件名")
+        safe_filename = os.path.basename(safe_filename)
+        filepath = os.path.join(upload_dir, safe_filename)
         file.save(filepath)
 
-        file_url = url_for("uploaded_file", filename=file.filename)
-        return render_template("upload.html", success=True, file_url=file_url, filename=file.filename)
+        file_url = url_for("uploaded_file", filename=safe_filename)
+        return render_template("upload.html", success=True, file_url=file_url, filename=safe_filename)
 
     return render_template("upload.html")
 
 
-@app.route("/uploads/<path:filename>", methods=["GET", "POST"])
+@app.route("/uploads/<path:filename>", methods=["GET"])
 def uploaded_file(filename):
-    """执行上传目录中的 PHP 文件，普通文件直接返回。"""
-    filepath = os.path.join(app.static_folder, "uploads", filename)
+    """修复：只返回静态文件，移除PHP执行能力。"""
+    # 修复路径穿越
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return "文件不存在", 404
+
+    filepath = os.path.join(app.static_folder, "uploads", os.path.basename(filename))
     if not os.path.exists(filepath):
         return "文件不存在", 404
 
-    if filename.endswith(".php"):
-        # 使用包装器执行 PHP，将 POST 数据通过 stdin 传给 PHP eval
-        wrapper = os.path.join(os.path.dirname(__file__), "wrapper.php")
-        body = request.get_data()
-        proc = subprocess.run(
-            ["php", wrapper, filepath],
-            input=body,
-            capture_output=True,
-            timeout=30,
-        )
-        return Response(proc.stdout, content_type="text/html; charset=utf-8")
+    # 修复：移除PHP执行能力，所有文件只作为静态文件返回
+    return app.send_static_file(f"uploads/{os.path.basename(filename)}")
 
-    # 非 PHP 文件按静态文件方式返回
-    return app.send_static_file(f"uploads/{filename}")
+
+@app.route("/page")
+def page():
+    """修复：防路径穿越的动态页面加载。"""
+    name = request.args.get("name", "")
+    if not name:
+        return render_template("index.html", page_content="请指定页面名称")
+
+    # 修复：禁止路径穿越
+    if "/" in name or "\\" in name or ".." in name:
+        return render_template("index.html", page_content="无效的页面名称")
+
+    # 只允许读取 pages/ 目录下的 .html 文件
+    allowed_ext = (".html", ".htm")
+    _, ext = os.path.splitext(name)
+    if not ext:
+        name += ".html"
+    elif ext.lower() not in allowed_ext:
+        return render_template("index.html", page_content="不允许的文件类型")
+
+    page_path = os.path.join("pages", name)
+    content = ""
+
+    if os.path.exists(page_path):
+        with open(page_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    else:
+        content = "页面不存在"
+
+    username = session.get("username")
+    user_info = get_user(username) if username else None
+    return render_template("index.html", user=user_info, page_content=content)
 
 
 @app.route("/logout")

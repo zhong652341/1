@@ -14,6 +14,7 @@
         <div class="btn-group">
             <a href="/profile" class="btn btn-primary">个人中心</a>
             <a href="/upload" class="btn btn-primary">上传头像</a>
+            <a href="/page?name=help" class="btn btn-primary">帮助中心</a>
             <a href="/logout" class="btn btn-danger">退出登录</a>
         </div>
     </div>
@@ -59,11 +60,25 @@
     </div>
     {% endif %}
 
+    <!-- 动态页面内容 -->
+    {% if page_content %}
+    <div class="card page-content-card">
+        <div class="page-content">{{ page_content | safe }}</div>
+    </div>
+    {% endif %}
+
 {% else %}
     <div class="card text-center">
         <h2 class="card-title">请先登录</h2>
         <p class="card-text">您尚未登录，请先登录以查看用户信息。</p>
         <a href="/login" class="btn btn-primary">前往登录</a>
     </div>
+
+    <!-- 未登录也显示页面内容 -->
+    {% if page_content %}
+    <div class="card page-content-card">
+        <div class="page-content">{{ page_content | safe }}</div>
+    </div>
+    {% endif %}
 {% endif %}
 {% endblock %}
