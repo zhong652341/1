@@ -1,12 +1,55 @@
-from flask import Flask, render_template, request, redirect, session, url_for
+from flask import Flask, render_template, render_template_string, request, redirect, session, url_for, abort
 import sqlite3
 import os
 import time
 import re
+import secrets
+import hmac
+from datetime import timedelta
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+
+# ── CSRF 防护 ─────────────────────────────────────────────────────────
+# 默认 SameSite=Strict，阻止跨站请求携带 Cookie
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Strict",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=2),
+)
+
+ALLOWED_ORIGINS = {"http://127.0.0.1:5000", "http://localhost:5000"}
+
+
+def check_csrf():
+    """验证 CSRF Token 和 Referer。"""
+    # 检查 Referer
+    referer = request.headers.get("Referer", "")
+    if referer:
+        from urllib.parse import urlparse
+        parsed = urlparse(referer)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin not in ALLOWED_ORIGINS:
+            abort(403, "CSRF: 非法的请求来源")
+
+    # 验证 CSRF Token
+    token = request.form.get("csrf_token", "")
+    session_token = session.get("csrf_token")
+    if not token or not session_token:
+        abort(403, "CSRF: 缺少 Token")
+    if not hmac.compare_digest(token, session_token):
+        abort(403, "CSRF: Token 不匹配")
+
+
+def generate_csrf_token():
+    """生成并存储 CSRF Token 到 session。"""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+app.jinja_env.globals["csrf_token"] = generate_csrf_token
 
 
 # ── 输入过滤 ─────────────────────────────────────────────────────────
@@ -355,6 +398,8 @@ def recharge():
     if not username:
         return redirect(url_for("login"))
 
+    check_csrf()
+
     amount_str = request.form.get("amount", "").strip()
 
     if not amount_str:
@@ -380,6 +425,126 @@ def recharge():
     conn.close()
 
     return redirect(url_for("profile"))
+
+
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    """修改密码：验证 CSRF Token、验证原密码、只能修改自己的密码。"""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    check_csrf()
+
+    target_username = request.form.get("username", "").strip()
+    new_password = request.form.get("new_password", "")
+    old_password = request.form.get("old_password", "")
+
+    if not target_username or not new_password:
+        return render_template("profile.html", user=get_user(username), error="用户名和新密码不能为空")
+
+    # 修复：只能修改自己的密码
+    if target_username != username:
+        return render_template("profile.html", user=get_user(username), error="只能修改自己的密码")
+
+    # 修复：需要验证原密码
+    user = get_user(username)
+    if not user or user["password"] != old_password:
+        return render_template("profile.html", user=get_user(username), error="原密码错误")
+
+    conn = sqlite3.connect("data/users.db")
+    conn.execute("UPDATE users SET password = ? WHERE username = ?", (new_password, target_username))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for("profile"))
+
+
+@app.route("/welcome")
+def welcome():
+    """个性化欢迎页 — 使用模板变量注入，防SSTI。"""
+    name = request.args.get("name", "")
+    if not name:
+        name = "亲爱的用户"
+    template = """<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>欢迎页</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>.welcome-card { text-align: center; padding: 60px 20px; }
+.welcome-card h1 { font-size: 36px; color: #667eea; margin-bottom: 16px; }
+.welcome-card p { color: #888; font-size: 16px; }</style>
+</head>
+<body>
+<nav class="navbar"><div class="nav-brand">用户管理系统</div>
+<div class="nav-menu">
+    <a href="/" class="nav-link">首页</a>
+    <a href="/welcome" class="nav-link">欢迎页</a>
+    <a href="/feedback" class="nav-link">反馈</a>
+</div></nav>
+<main class="container">
+<div class="card welcome-card">
+    <h1>欢迎你，{{ name }}！</h1>
+    <p>很高兴见到你，祝你使用愉快！</p>
+</div></main></body></html>"""
+    return render_template_string(template, name=name)
+
+
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    """反馈页面 — 使用模板变量注入，防SSTI。"""
+    if request.method == "POST":
+        name = request.form.get("name", "匿名用户")
+        message = request.form.get("message", "")
+
+        template = """<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>反馈结果</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<nav class="navbar"><div class="nav-brand">用户管理系统</div>
+<div class="nav-menu">
+    <a href="/" class="nav-link">首页</a>
+    <a href="/welcome" class="nav-link">欢迎页</a>
+    <a href="/feedback" class="nav-link">反馈</a>
+</div></nav>
+<main class="container">
+<div class="card">
+    <h2>{{ name }} 的反馈：</h2>
+    <p>{{ message }}</p>
+    <a href="/feedback" class="btn btn-primary">继续反馈</a>
+</div></main></body></html>"""
+        return render_template_string(template, name=name, message=message)
+
+    template = """<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>反馈</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<nav class="navbar"><div class="nav-brand">用户管理系统</div>
+<div class="nav-menu">
+    <a href="/" class="nav-link">首页</a>
+    <a href="/welcome" class="nav-link">欢迎页</a>
+    <a href="/feedback" class="nav-link">反馈</a>
+</div></nav>
+<main class="container">
+<div class="card" style="max-width:500px;margin:0 auto;">
+    <h2 class="card-title">意见反馈</h2>
+    <form method="post" action="/feedback" class="form">
+        <div class="form-group">
+            <label for="name">姓名</label>
+            <input type="text" id="name" name="name" placeholder="请输入你的姓名" required>
+        </div>
+        <div class="form-group">
+            <label for="message">留言内容</label>
+            <textarea id="message" name="message" rows="5" placeholder="请输入你的意见或建议" required
+                      style="padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:100%;resize:vertical;"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">提交反馈</button>
+    </form>
+</div></main></body></html>"""
+    return render_template_string(template)
 
 
 if __name__ == "__main__":
