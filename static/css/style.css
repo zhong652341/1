@@ -369,3 +369,24 @@ body {
     border-top: 1px solid #eee;
     margin: 16px 0;
 }
+
+/* Ping测试 */
+.ping-card {
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.console {
+    background: #1e1e1e;
+    color: #00ff00;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+    max-height: 400px;
+    overflow-y: auto;
+}

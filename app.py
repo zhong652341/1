@@ -5,11 +5,14 @@ import time
 import re
 import secrets
 import hmac
+import subprocess
 from datetime import timedelta
 from urllib.parse import urlparse
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = "dev-key-2025"
+# 修复弱密钥：优先使用环境变量，不存在则随机生成
+app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 
 # ── CSRF 防护 ─────────────────────────────────────────────────────────
@@ -102,11 +105,14 @@ def init_db():
         pass  # 字段已存在
 
     # 插入默认用户（INSERT OR IGNORE 防止重复插入）
+    # 修复密码明文存储：使用哈希存储密码
     conn.execute(
-        "INSERT OR IGNORE INTO users (username, password, email, phone) VALUES ('admin', 'admin123', 'admin@example.com', '13800138000')"
+        "INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+        ('admin', generate_password_hash('admin123'), 'admin@example.com', '13800138000')
     )
     conn.execute(
-        "INSERT OR IGNORE INTO users (username, password, email, phone) VALUES ('alice', 'alice2025', 'alice@example.com', '13900139001')"
+        "INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+        ('alice', generate_password_hash('alice2025'), 'alice@example.com', '13900139001')
     )
     conn.commit()
     conn.close()
@@ -165,11 +171,12 @@ def login():
         # 使用参数化查询，防 SQL 注入
         conn = sqlite3.connect("data/users.db")
         conn.row_factory = sqlite3.Row
-        cur = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
+        cur = conn.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
         conn.close()
 
-        if user:
+        # 修复：使用 check_password_hash 比对密码（防时序攻击）
+        if user and check_password_hash(user["password"], password):
             session["username"] = user["username"]
             _login_attempts.pop(lock_key, None)
             return redirect(url_for("index"))
@@ -231,13 +238,16 @@ def register():
         try:
             sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
             print(f"[SQL] {sql}")
-            conn.execute(sql, (username, password, email, phone))
+            conn.execute(sql, (username, generate_password_hash(password), email, phone))
             conn.commit()
             conn.close()
             return redirect(url_for("login", success="注册成功，请登录"))
-        except Exception as e:
+        except sqlite3.IntegrityError:
             conn.close()
-            return render_template("register.html", error=f"注册失败: {e}")
+            return render_template("register.html", error="用户名已存在")
+        except Exception:
+            conn.close()
+            return render_template("register.html", error="注册失败，请稍后再试")
 
     return render_template("register.html")
 
@@ -447,13 +457,13 @@ def change_password():
     if target_username != username:
         return render_template("profile.html", user=get_user(username), error="只能修改自己的密码")
 
-    # 修复：需要验证原密码
+    # 修复：需要验证原密码（使用哈希比对）
     user = get_user(username)
-    if not user or user["password"] != old_password:
+    if not user or not check_password_hash(user["password"], old_password):
         return render_template("profile.html", user=get_user(username), error="原密码错误")
 
     conn = sqlite3.connect("data/users.db")
-    conn.execute("UPDATE users SET password = ? WHERE username = ?", (new_password, target_username))
+    conn.execute("UPDATE users SET password = ? WHERE username = ?", (generate_password_hash(new_password), target_username))
     conn.commit()
     conn.close()
 
@@ -545,6 +555,45 @@ def feedback():
     </form>
 </div></main></body></html>"""
     return render_template_string(template)
+
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    """Ping 网络诊断 — 修复命令注入漏洞。"""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    result = ""
+    ip = ""
+    if request.method == "POST":
+        ip = request.form.get("ip", "").strip()
+
+        # 修复命令注入：验证 IP 地址或域名格式
+        import re as _re
+        # 只允许 IP 地址或合法域名
+        ip_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$'
+        is_ip = _re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip)
+        is_domain = _re.match(ip_pattern, ip)
+
+        if not is_ip and not is_domain:
+            result = "无效的 IP 地址或域名"
+        else:
+            try:
+                # 修复：使用列表参数执行，不用 shell=True
+                proc = subprocess.run(
+                    ["ping", "-c", "3", ip],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                result = proc.stdout + proc.stderr
+            except subprocess.TimeoutExpired:
+                result = "命令执行超时（30秒）"
+            except Exception as e:
+                result = f"执行错误: {e}"
+
+    return render_template("ping.html", ip=ip, result=result)
 
 
 if __name__ == "__main__":

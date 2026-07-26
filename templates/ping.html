@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Ping测试 - 用户管理系统{% endblock %}
+{% block content %}
+<div class="card ping-card">
+    <h2 class="card-title">Ping 网络诊断</h2>
+    <p class="card-text">请输入 IP 地址或域名进行 Ping 测试</p>
+    <form method="post" action="{{ url_for('ping') }}" class="form">
+        <div class="form-row">
+            <input type="text" id="ip" name="ip" class="search-input" placeholder="例如: 114.114.114.114 或 baidu.com" value="{{ ip }}" required>
+            <button type="submit" class="btn btn-primary">Ping</button>
+        </div>
+    </form>
+</div>
+
+{% if result %}
+<div class="card">
+    <h3 class="card-title">执行结果</h3>
+    <div class="console">{{ result }}</div>
+</div>
+{% endif %}
+{% endblock %}
